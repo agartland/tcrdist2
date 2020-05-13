@@ -12,10 +12,11 @@ import scipy.cluster.hierarchy as sch
 from scipy.spatial import distance
 
 import fishersapi
+# from hierdiff import hcluster_diff as hclusterDiff
 
 from .pvalue_adjustment import adjustnonnan
 
-__all__ = ['neighborhoodDiff', 'hclusterDiff']
+__all__ = ['neighborhoodDiff', 'member_summ']
 
 """TODO:
  * Parallelize permutation test to compute p-values for
@@ -39,7 +40,12 @@ def _prep_counts(cdf, xcols, ycol='NBR', count_col=None):
     if count_col is None:
         cdf = cdf.assign(Count=1)
         count_col = 'Count'
-    counts = cdf.groupby(xcols + [ycol], sort=True)[count_col].agg(np.sum).unstack(ycol).fillna(0)[[0, 1]]
+    counts = cdf.groupby(xcols + [ycol], sort=True)[count_col].agg(np.sum).unstack(ycol).fillna(0)
+    for i in [0, 1]:
+        if not i in counts.columns:
+            counts.loc[:, i] = np.zeros(counts.shape[0])
+
+    counts = counts[[0, 1]]
     return counts
 
 def _chi2NBR(res_df, count_cols):
@@ -72,7 +78,7 @@ def _CMH_NBR(counts, continuity_correction=True):
     where each table in the set has cluster membership as one variable
     and the first x_col as the other variable (requires that x_cols[0] is binary).
     Each table in the set is from a different strata defined by the categorical
-    variables in x_cols[1:]. This test only applies to tests pf more than one variable.
+    variables in x_cols[1:]. This test only applies to tests of more than one variable.
 
     Parameters
     ----------
@@ -378,142 +384,49 @@ def neighborhoodDiff(clone_df, pwmat, x_cols, count_col='count', test='chi2', kn
                                   c.replace('pvalue', 'FDRq'):adjustnonnan(res_df[c].values, method='fdr_bh')})
     return res_df
 
-def hclusterDiff(clone_df, pwmat, x_cols, count_col='count', test='chi2', min_n=20, method='complete', **kwargs):
-    """Tests for association of categorical variables in x_cols with each cluster/node
-    in a hierarchical clustering of clones with distances in pwmat.
 
-    Use Fisher's exact test (test='fishers') to detect enrichment/association of the neighborhood
-    with one variable.
+def member_summ(res_df, clone_df, summ_within=False, count_col='count', addl_cols=[], addl_n=1):
+    """Return additional summary info about each result (row)) based on the members of the cluster.
+        
+    By default, summary will include all rows of clone_df even when results are based on "test_within" grouping.
+    To get a summary within each group use summ_within=True.
 
-    Tests the 2 x 2 table for each clone:
-
-    +----+----+-------+--------+
-    |         |  Neighborhood  |
-    |         +-------+--------+
-    |         | Y     |    N   |
-    +----+----+-------+--------+
-    |VAR |  1 | a     |    b   |
-    |    +----+-------+--------+
-    |    |  0 | c     |    d   |
-    +----+----+-------+--------+
-
-    Use the chi-squared test (test='chi2') or logistic regression (test='logistic') to detect association across multiple variables.
-    Note that with small clusters Chi-squared tests and logistic regression are unreliable. It is possible
-    to pass an L2 penalty to the logistic regression using l2_alpha in kwargs, howevere this requires a permutation
-    test (nperms also in kwargs) to compute a value.
-
-    Use the Cochran-Mantel-Haenszel test (test='chm') to test stratified 2 x 2 tables: one VAR vs. cluster, over sever strata
-    defined in other variables. Use x_cols[0] as the primary (binary) variable and other x_cols for the categorical
-    strata-defining variables. This tests the overall null that OR = 1 for x_cols[0]. A test is also performed
-    for homogeneity of the ORs among the strata (Breslow-Day test).
-
-    Params
-    ------
-    clone_df : pd.DataFrame [nclones x metadata]
-        Contains metadata for each clone.
-    pwmat : np.ndarray [nclones x nclones]
-        Square distance matrix for defining neighborhoods
-    x_cols : list
-        List of columns to be tested for association with the neighborhood
-    count_col : str
-        Column in clone_df that specifies counts.
-        Default none assumes count of 1 cell for each row.
-    test : str
-        Specifies Fisher's exact test ("fishers"), Chi-squared ("chi2") or
-        logistic regression ("glm") for testing the association.
-        Also "chi2+fishers" tests the global null using Chi2 and all pairwise
-        combinations of variable values using Fisher's.
-    min_n : int
-        Minimum size of a cluster for it to be tested.
-    kwargs : dict
-        Arguments for the various test functions (currently only logistic
-        regression, which takes l2_alpha and nperms)
-
-    Returns
-    -------
-    res_df : pd.DataFrame [nclusters x results]
-        Results from testing each cluster.
-    Z : linkage matrix [clusters, 4]
-        Clustering result returned from scipy.cluster.hierarchy.linkage"""
-    if test == 'fishers':
-        test_func = _fisherNBR
-        assert len(x_cols) == 1
-    elif test in ['chisq', 'chi2']:
-        test_func = _chi2NBR
-    elif test == 'glm':
-        test_func = _glmNBR
-
-    n = clone_df.shape[0]
-    assert n == pwmat.shape[0]
-    assert n == pwmat.shape[1]
-    ycol = 'NBR'
-
-    compressedDmat = distance.squareform(pwmat)
-    Z = sch.linkage(compressedDmat, method=method)
-
-    clusters = {}
-    for i, merge in enumerate(Z):
-        cid = 1 + i + Z.shape[0]
-        clusters[cid] = [merge[0], merge[1]]
-
-    def _get_indices(clusters, i):
-        if i <= Z.shape[0]:
-            return [int(i)]
+    summ_df = member_summ(res_df, clone_df)
+    res_df = res_df.join(summ_df, how='left')
+    """
+    def _top_N_str(m, col, count_col, N):
+        gby = m.groupby(col)[count_col].agg(np.sum)
+        gby = 100 * gby / gby.sum()
+        gby = gby.sort_values(ascending=False)
+        out = ', '.join(['%s (%2.1f%%)' % (idx, v) for idx,v in gby.iteritems()][:N])
+        return out
+    
+    split = []
+    for resi, res_row in res_df.iterrows():
+        if summ_within:
+            m = clone_df.iloc[res_row['members_within_i']]
         else:
-            return _get_indices(clusters, clusters[i][0]) + _get_indices(clusters, clusters[i][1])
+            m = clone_df.iloc[res_row['members_i']]
 
-    members = {i:_get_indices(clusters, i) for i in range(Z.shape[0] + 1, max(clusters.keys()) + 1)}
+        mode_i = m[count_col].idxmax()
+        summ = {}
+        for c in [c for c in clone_df.columns if 'cdr3' in c]:
+            summ[c] = _top_N_str(m, c, count_col, 1)
+        for c in [c for c in clone_df.columns if 'gene' in c]:
+            summ[c] = _top_N_str(m, c, count_col, 3)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        res = []
-        for cid, m in members.items():
-            not_m = [i for i in range(n) if not i in m]
-            y = np.zeros(n)
-            y[m] = 1
+        x_val_cols = [c for c in res_df.columns if 'x_val_' in c]
+        x_freq_cols = [c for c in res_df.columns if 'x_freq_' in c]
+        
+        for label_col, freq_col in zip(x_val_cols, x_freq_cols):
+            summ[res_row[label_col]] = np.round(res_row[freq_col], 3)
 
-            K = np.sum(y)
-            if K >= min_n and K < (n-min_n):
-                R = np.max(pwmat[m, :][:, m])
+        for c in [c for c in addl_cols]:
+            summ[c] = _top_N_str(m, col, count_col, summ_n)
+        summ = pd.Series(summ, name=resi)
+        split.append(summ)
+    summ = pd.DataFrame(split)
+    return summ
 
-                cdf = clone_df.assign(**{ycol:y})[[ycol, count_col] + x_cols]
-                counts = _prep_counts(cdf, x_cols, ycol, count_col)
 
-                out = {'CTS%d' % i:v for i,v in enumerate(counts.values.ravel())}
-
-                uY = [1, 0]
-                out.update({'x_col_%d' % i:v for i,v in enumerate(x_cols)})
-                for i,xvals in enumerate(counts.index.tolist()):
-                    if type(xvals) is tuple:
-                        val = '|'.join(xvals)
-                    else:
-                        val = xvals
-                    out.update({'x_val_%d' % i:val,
-                                'x_freq_%d' % i: counts.loc[xvals, 1] / counts.loc[xvals].sum()})
-
-                out.update({'cid':cid,
-                            'members_index':list(clone_df.index[m]),
-                            'members_i':m,
-                            'K_neighbors':K,
-                            'R_radius':R})
-
-                if test == 'logistic':
-                    glm_res = _glmCatNBR(cdf, x_cols, y_col=ycol, count_col=count_col, **kwargs)
-                    out.update(glm_res)
-                elif test == 'chi2+fishers':
-                    comb_res = _chi2_fishersNBR(counts)
-                    out.update(comb_res)
-                elif test == 'chm':
-                    comb_res = _CMH_NBR(counts)
-                    out.update(comb_res)
-                res.append(out)
-
-        res_df = pd.DataFrame(res)
-        if test in ['fishers', 'chi2']:
-            out = test_func(res_df, count_cols=[c for c in res_df.columns if c.startswith('CTS')])
-            res_df = res_df.assign(**out)
-
-    for c in [c for c in res_df.columns if 'pvalue' in c]:
-        res_df = res_df.assign(**{c.replace('pvalue', 'FWERp'):adjustnonnan(res_df[c].values, method='holm'),
-                                  c.replace('pvalue', 'FDRq'):adjustnonnan(res_df[c].values, method='fdr_bh')})
-    return res_df
+    

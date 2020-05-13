@@ -18,13 +18,29 @@ def catcorr(df, x_cols=None, y_cols=None, count_col=None, min_n=10):
     Fisher's exact test. This is not the best way to model associations
     with multinomial distributed variables, but it will work as an initial screen.
 
+    Unique values of each column in x_cols will be tested for association with
+    unique values of each column in y_cols. If one is None then all pairs of
+    values in columns will be tested. If both are None then all columns will be used.
+
+    Each test is a Fisher's test of the following example 2x2 table:
+       Y+  Y-
+    X+ 4   8
+    X- 9   3
+
+    where X+/- indicates the number of row counts with x_col == xval.
+
+    All counts, frequencies, OR and pvalues are provided in the output.
+
+
     Parameters
     ----------
     df : pd.DataFrame
         Data contains columns of categorical variables.
+    x_cols, y_cols : list of columns in df
+        Columns with values to be tested for association.
     min_n : int
-        Minimum number of counts required for testing.
-    counts_col : str
+        Minimum number of X+Y+ counts required for testing.
+    count_col : str
         Column name indicating counts for each row. If None
         will use one count per row.
 
