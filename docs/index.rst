@@ -35,34 +35,42 @@ role in epitope specificity (see Methods and Extended Data Fig. 3)."
    :maxdepth: 2
 
    Installation
+   HotStart
+   Inputs
    CompleteExample
    Saving
    Plotting
+   
 
 .. toctree::
- :caption: Pre-Processing
- :maxdepth: 2
+   :caption: Pre-Processing
+   :maxdepth: 2
 
- Preprocessing
- Preprocess_10X
- Preprocess_Adaptive
+   Mixcr
+   Preprocess_10X
+   Preprocess_Adaptive
+   Preprocessing
+   tcrdist1_to_tcrdist2
 
 .. _more-details:
 
 .. toctree::
    :caption: More details
    :maxdepth: 2
-
-   PairwiseDistance
-   Proximity
-   Subset
+   
    Motifs
    Mappers
-   Storage
-   Repertoire
-   Pairwise
-   Processing
    Neighborhood
+   OlgaModel
+   Pairwise
+   PairwiseDistance
+   pGen
+   Processing
+   Proximity 
+   Repertoire
+   Storage
+   Subset
+   TCRMotif_Explained
    WhatIsNew
 
 
